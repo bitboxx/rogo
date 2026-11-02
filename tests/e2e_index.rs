@@ -600,6 +600,118 @@ fn rogoignore_excludes_files_from_the_start_and_when_added_later() {
     );
 }
 
+/// The default `.rogoignore` a first index writes keeps the directories
+/// package managers install into out of the corpus: a project's own files
+/// get in, its `node_modules` and virtualenvs do not, under any name for the
+/// virtualenv and at any depth, with or without `--hidden`.
+#[test]
+#[serial]
+#[ignore = "e2e: needs the default model; run with --include-ignored"]
+fn a_fresh_index_leaves_dependency_directories_out() {
+    let corpus = Corpus::new();
+    corpus.write(
+        "notes.md",
+        "The lighthouse keeper logs every passing schooner.\n",
+    );
+    corpus.write(
+        "src/app.js",
+        "// the ferry timetable\nexport const ferry = 'hourly';\n",
+    );
+    for dep in [
+        "node_modules/left-pad/index.js",
+        "web/node_modules/ferry/index.js",
+        "bower_components/ferry/ferry.js",
+        ".venv/lib/python3.12/site-packages/ferry/__init__.py",
+        "venv/lib/python3.12/site-packages/ferry/__init__.py",
+        "py-env/lib/python3.12/site-packages/ferry/__init__.py",
+        "src/__pycache__/app.txt",
+        ".tox/py312/lib/ferry.py",
+    ] {
+        corpus.write(dep, "marzipan from a vendored package\n");
+    }
+    corpus.index();
+    assert_eq!(total_files(&corpus), 2, "a dependency file was indexed");
+    expect_no_hits(&corpus, &["--lex", "marzipan"]);
+
+    // With --hidden the dot-directories are walked too; their patterns
+    // still hold. The .rogoignore itself joins as a hidden text file.
+    run_ok(corpus.rogo().args(["--index", "-q", "--hidden", "."]));
+    assert_eq!(
+        total_files(&corpus),
+        3,
+        "a hidden dependency file was indexed"
+    );
+    expect_no_hits(&corpus, &["--lex", "marzipan"]);
+}
+
+/// Text the old flat ~4.8 characters per token let past the model's
+/// 2,048-token context, so embed truncated the chunk and warned: a table of
+/// scores, a version list, a changelog of commit hashes and a JavaScript
+/// table of numbers. The tokenizer splits numbers into digits and spends
+/// about a token on each punctuation mark and line break; the shapes are the
+/// ones that overflowed in a vault and in a node_modules tree.
+#[test]
+#[serial]
+#[ignore = "e2e: needs the default model; run with --include-ignored"]
+fn dense_text_is_chunked_within_the_model_context() {
+    let corpus = Corpus::new();
+    let mut table = String::from(
+        "# Scores\n\n| Team | F | D | H | Q | Tokens, minutes |\n|---|---|---|---|---|---|\n",
+    );
+    let mut versions = String::new();
+    let mut log = String::from("# Changelog\n\n");
+    let mut ranges = String::from("export const ranges = [\n");
+    // xorshift64: fixed, so the fixture is the same on every run.
+    let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+    let mut next = move || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    for i in 0..400 {
+        let r = next();
+        table.push_str(&format!(
+            "| team{i} | 0.{:02} | 0.{:02} | 0.{:02} | 0.{:02} | {}.{}M, {} |\n",
+            r % 100,
+            (r >> 8) % 100,
+            (r >> 16) % 100,
+            (r >> 24) % 100,
+            (r >> 32) % 50,
+            (r >> 40) % 10,
+            (r >> 44) % 200
+        ));
+        versions.push_str(&format!(
+            "    \"browser{i}\": \"{}.{}\",\n",
+            (r >> 8) % 120,
+            (r >> 16) % 10
+        ));
+        let hash = next();
+        log.push_str(&format!(
+            "- [`{:07x}`](https://github.com/acme/widgets/commit/{r:016x}{hash:016x}) fix #{}\n",
+            r & 0xfff_ffff,
+            (r >> 20) % 5000
+        ));
+        let nums: Vec<String> = (0..16)
+            .map(|k| ((r >> (k * 4)) % 300).to_string())
+            .collect();
+        ranges.push_str(&format!("  {},\n", nums.join(", ")));
+    }
+    ranges.push_str("];\n");
+    corpus.write("scores.md", table);
+    corpus.write("versions.txt", versions);
+    corpus.write("CHANGELOG.md", log);
+    corpus.write("ranges.js", ranges);
+
+    let out = corpus.index();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("truncated"),
+        "a chunk passed the model's context:\n{stderr}"
+    );
+    assert_eq!(total_files(&corpus), 4);
+}
+
 #[test]
 #[serial]
 #[ignore = "e2e: needs the default model; run with --include-ignored"]

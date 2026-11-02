@@ -38,8 +38,10 @@ fn warn_legacy_ignore(path: &Path) {
 }
 
 /// Patterns a fresh `.rogoignore` starts with, written by `--index` when the
-/// corpus has none. Ported from upstream's default so existing corpora behave
-/// the same.
+/// corpus has none. Ported from upstream's default, plus the directories
+/// package managers install into: a JavaScript or Python project's own code
+/// is a few hundred files, its `node_modules` or virtualenv tens of
+/// thousands. `site-packages/` catches a virtualenv under any name.
 pub const DEFAULT_ROGOIGNORE: &str = r"# .rogoignore - Default patterns for rogo semantic search
 # Created automatically during first index
 # Syntax: same as .gitignore (glob patterns, ! for negation)
@@ -103,6 +105,17 @@ pub const DEFAULT_ROGOIGNORE: &str = r"# .rogoignore - Default patterns for rogo
 *.json
 *.yaml
 *.yml
+
+# Dependency directories: other people's code, installed by a package manager
+node_modules/
+bower_components/
+jspm_packages/
+.venv/
+venv/
+site-packages/
+__pycache__/
+.tox/
+.nox/
 
 # Add your custom patterns below this line
 ";
