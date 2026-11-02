@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Changed
+
+- The default `.rogoignore` that the first `--index` writes now also lists
+  dependency directories: `node_modules/`, `bower_components/`,
+  `jspm_packages/`, `.venv/`, `venv/`, `site-packages/`, `__pycache__/`,
+  `.tox/` and `.nox/`. An existing `.rogoignore` is never rewritten; add the
+  lines to it by hand.
+- The chunker's token estimate counts digits, punctuation, whitespace runs
+  and line breaks the way the tokenizer spends tokens on them, instead of a
+  flat ~4.8 characters per token for Latin text. Tables, version lists,
+  changelogs and data files tokenized at ~1-2 characters per token, so 11%
+  of a notes vault's chunks and 3-6% of a node_modules tree and a
+  virtualenv passed the model's 2,048-token context, and embed truncated
+  them (the `truncated N of M inputs` warning). On the same corpora no chunk
+  of the vault passes it now, and 5 of ~207,000 in the two dependency trees
+  still do (tables of rare Unicode letters). Chunks get smaller in real
+  tokens (the vault's average went from ~1,290 to ~860, about 1.5 times as
+  many chunks for about the same tokens embedded).
+- `CHUNKER_VERSION` is 3, so the next `--index` of an existing corpus
+  rebuilds it once.
+
 ## 2.1.0 - 2026-10-20
 
 ckq is now **rogo** (Latin "I ask"). Same engine, same index format, new

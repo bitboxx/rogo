@@ -673,11 +673,12 @@ mod signature_tests {
 
     #[test]
     fn the_plain_gemma_signature_is_unchanged() {
-        // The value a fresh chunker-v2 index carries. A change here forces
+        // The value a fresh chunker-v3 index carries. A change here forces
         // every index to be rebuilt, so it has to be deliberate: it last
-        // moved when the chunker learned to split over-long lines.
+        // moved when the token estimate learned to count digits,
+        // punctuation and line breaks.
         if std::env::var_os("ROGO_GGUF_FILE").is_none() && embedded_alias() != Some("gemma-q4") {
-            assert_eq!(signature(resolve("gemma-q4").unwrap()), "0fc9533b8317c2f0");
+            assert_eq!(signature(resolve("gemma-q4").unwrap()), "69c0685fb7823d2c");
         }
     }
 }

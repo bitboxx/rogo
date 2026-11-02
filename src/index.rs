@@ -93,10 +93,21 @@ pub fn update(corpus: &Corpus, opts: &IndexOptions) -> Result<IndexReport> {
             let existing = store.meta()?;
             if existing.signature != meta.signature {
                 if !opts.quiet {
-                    eprintln!(
-                        "index model changed from {} to {}; rebuilding",
-                        existing.model_alias, meta.model_alias
-                    );
+                    if existing.model_alias == meta.model_alias {
+                        // Same alias, new chunker, prompts or weights file:
+                        // naming the model twice read as a change that did
+                        // not happen.
+                        eprintln!(
+                            "index signature changed for {} (chunker, prompts or weights); \
+                             rebuilding",
+                            meta.model_alias
+                        );
+                    } else {
+                        eprintln!(
+                            "index model changed from {} to {}; rebuilding",
+                            existing.model_alias, meta.model_alias
+                        );
+                    }
                 }
                 true
             } else {

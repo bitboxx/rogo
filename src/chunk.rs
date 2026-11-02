@@ -4,8 +4,9 @@
 //! size; other text packs whole lines. Sizes match the old engine (1,024-token
 //! target, 200-token overlap) so the vectors stay comparable with what the
 //! benchmarks measured. Token counts are a character-based estimate, not a
-//! real tokenizer: per-script rates chosen to err high, so the gap the
-//! estimate still leaves is covered by the model's own context (2,048).
+//! real tokenizer: per-class counts fitted to the real one (see
+//! [`estimate_tokens`]), so the gap the estimate still leaves is covered by
+//! the model's own context (2,048).
 
 use crate::corpus::RelPath;
 
@@ -16,7 +17,7 @@ pub const OVERLAP_TOKENS: usize = 200;
 /// new split rule, a different token estimate). Folded into the index
 /// signature, so an index built before the change is refused instead of
 /// mixing incomparable vectors.
-pub const CHUNKER_VERSION: u16 = 2;
+pub const CHUNKER_VERSION: u16 = 3;
 
 /// A span of a document. Bytes are a half-open range into the file's UTF-8
 /// text, on char boundaries; lines are 1-based and inclusive.
@@ -92,7 +93,8 @@ fn split_lines(text: &str) -> Vec<Unit<'_>> {
         if trimmed.trim().is_empty() {
             continue;
         }
-        let tokens = estimate_tokens(trimmed);
+        // The line break is a token of its own.
+        let tokens = estimate_tokens(trimmed) + 1;
         if tokens > TARGET_TOKENS {
             // A line past the target leaves `pack` no choice but one chunk
             // over the model's whole context, and embed truncates that,
@@ -136,10 +138,10 @@ fn split_oversized(doc: &str, start: usize, end: usize, line: usize) -> Vec<Unit
 }
 
 /// Token estimate for a piece of an over-long line. A line too long for the
-/// target is dense by nature — minified code measures near two characters
-/// per token on the real tokenizer — so the prose rates (4.8, or 4.2 for
-/// code-indicator-bearing lines) undercount it by more than the 2x the
-/// context gives; never more optimistic than 2.5 characters per token.
+/// target is dense by nature — minified code and base64 measure near two
+/// characters per token on the real tokenizer, and a run of random letters
+/// is where the word rate undercounts most — so never more optimistic than
+/// 2.5 characters per token.
 /// Wide-script and emoji pieces keep their higher rates, which this takes
 /// the max with.
 fn dense_estimate(piece: &str) -> usize {
@@ -271,44 +273,102 @@ fn pack(mut units: Vec<Unit<'_>>) -> Vec<Unit<'_>> {
 
 /// Estimated token count. A character-based guess, deliberately lopsided:
 /// underestimating is what lets a chunk past the model's context, where embed
-/// truncates it, so each class of characters gets a rate on the safe side of
-/// what the real tokenizer measures (emoji ≈1 token per character, Arabic and
-/// the Indic scripts ≈3 characters per token) rather than the English ~4.8
-/// the old engine assumed for everything but CJK.
+/// truncates it. So each class of characters is counted the way the real
+/// (gemma) tokenizer spends tokens on it, on the safe side of measurement:
+///
+/// - a digit is a token of its own (the tokenizer splits numbers), and a
+///   numeric character outside ASCII falls back to bytes, two tokens;
+/// - punctuation and other symbols, close to one token each;
+/// - a run of letters is a word, a token per [`LATIN_WORD`] characters
+///   (per [`OTHER_WORD`] in other alphabets), and a lower-to-upper case
+///   change starts a new word, the way camelCase and base64 tokenize;
+/// - a run of two or more whitespace characters, one token (a single space
+///   rides on the word after it);
+/// - wide scripts ≈1.2 characters per token, the dense scripts (Arabic,
+///   Indic and the like) ≈2, emoji and their joiners one each.
+///
+/// The old engine's flat ~4.8 characters per token missed digits,
+/// punctuation and line breaks: vault notes with tables measured ~1.9, and
+/// 11% of one vault's chunks tokenized past the context.
 pub fn estimate_tokens(text: &str) -> usize {
-    if text.is_empty() {
-        return 0;
-    }
     let mut wide = 0usize;
     let mut dense = 0usize;
-    let mut symbol = 0usize;
+    let mut single = 0usize;
+    let mut punct = 0usize;
+    let mut words = 0usize;
+    let mut run = 0usize;
+    let mut run_other = false;
+    let mut run_lower = false;
+    let mut spaces = 0usize;
+    let end_word = |run: &mut usize, other: bool, words: &mut usize| {
+        if *run > 0 {
+            let rate = if other { OTHER_WORD } else { LATIN_WORD };
+            *words += run.div_ceil(rate);
+            *run = 0;
+        }
+    };
     for c in text.chars() {
+        if c.is_whitespace() {
+            end_word(&mut run, run_other, &mut words);
+            spaces += 1;
+            continue;
+        }
+        if spaces > 1 {
+            single += 1;
+        }
+        spaces = 0;
         let code = c as u32;
         if is_wide_script(code) {
+            end_word(&mut run, run_other, &mut words);
             wide += 1;
         } else if is_dense_script(code) {
+            end_word(&mut run, run_other, &mut words);
             dense += 1;
         } else if is_symbol_ish(code) {
-            symbol += 1;
+            // Before letters: fullwidth forms are alphabetic, and cost a
+            // token each like the emoji in this class.
+            end_word(&mut run, run_other, &mut words);
+            single += 1;
+        } else if c.is_alphabetic() {
+            if run > 0 && run_lower && c.is_uppercase() {
+                end_word(&mut run, run_other, &mut words);
+            }
+            if run == 0 {
+                run_other = false;
+            }
+            run += 1;
+            run_other |= code > 0x024F; // past Latin Extended-B
+            run_lower = c.is_lowercase();
+        } else {
+            end_word(&mut run, run_other, &mut words);
+            if c.is_ascii_digit() {
+                single += 1;
+            } else if c.is_numeric() {
+                single += 2;
+            } else {
+                punct += 1;
+            }
         }
     }
-    let rest = text.chars().count() - wide - dense - symbol;
-    let code_indicators = count_code_indicators(text);
-    let total_lines = text.lines().count().max(1);
-    let code_density = code_indicators as f32 / total_lines as f32;
-    let chars_per_token = if code_density > 0.3 {
-        4.2 // likely code
-    } else if code_density > 0.1 {
-        4.4 // mixed
-    } else {
-        4.8 // natural language
-    };
-    // Wide ≈1.2 chars/token, dense ≈2 (measured ≈3), symbols and the
-    // joiners emoji ride on ≈1 each, everything else at the Latin rate.
+    end_word(&mut run, run_other, &mut words);
+    if spaces > 1 {
+        single += 1;
+    }
     let tokens =
-        wide as f32 / 1.2 + dense as f32 / 2.0 + symbol as f32 + rest as f32 / chars_per_token;
+        wide as f32 / 1.2 + dense as f32 / 2.0 + single as f32 + punct as f32 * 0.8 + words as f32;
     tokens.ceil() as usize
 }
+
+/// Letters per token in a Latin-script word. Fitted with the other rates on
+/// 88,000 chunks (a notes vault, a node_modules tree, a Python venv, the
+/// bench) so the estimate is right on average for notes and a chunk at the
+/// 1,024-token target stays under ~1,850 real tokens. Only exotic text still
+/// overflows: tables of rare Unicode letters, which fall back to bytes.
+const LATIN_WORD: usize = 6;
+/// Letters per token in the other alphabets (Cyrillic, Greek and the rest
+/// outside the wide and dense lists): half the Latin rate, to stay on the
+/// safe side where the fit had little text.
+const OTHER_WORD: usize = 3;
 
 /// Characters from scripts whose tokenizers spend roughly one token per
 /// character: Han, kana, Hangul, Thai, Lao, Khmer and Myanmar.
@@ -362,39 +422,6 @@ fn is_symbol_ish(code: u32) -> bool {
         | 0xFF00..=0xFF5F // fullwidth forms
         | 0x1F000..=0x1FFFF // emoji, pictographs, regional indicators
     )
-}
-
-fn count_code_indicators(text: &str) -> usize {
-    let mut count = 0;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('#') {
-            continue;
-        }
-        if trimmed.contains('{') || trimmed.contains('}') {
-            count += 1;
-        }
-        if trimmed.contains(';') && !trimmed.ends_with('.') {
-            count += 1;
-        }
-        if trimmed.contains("fn ")
-            || trimmed.contains("def ")
-            || trimmed.contains("function ")
-            || trimmed.contains("func ")
-        {
-            count += 1;
-        }
-        if trimmed.contains("->") || trimmed.contains("=>") || trimmed.contains("::") {
-            count += 1;
-        }
-        if trimmed.starts_with("pub ")
-            || trimmed.starts_with("private ")
-            || trimmed.starts_with("public ")
-        {
-            count += 1;
-        }
-    }
-    count
 }
 
 /// The language label printed in results: "markdown", "rust", "python",
@@ -592,11 +619,41 @@ mod tests {
     }
 
     #[test]
-    fn latin_and_cjk_estimates_stay_where_they_were() {
-        // The bench's Latin and CJK documents must keep packing exactly as
-        // before; only the newly classified scripts may estimate higher.
+    fn plain_words_and_cjk_estimate_at_their_rates() {
+        // A short word is one token, a single space is free.
         assert_eq!(estimate_tokens("hello world of text"), 4);
         assert!(estimate_tokens("山中的寺庙藏于云雾之间") >= 9);
+    }
+
+    #[test]
+    fn digits_and_punctuation_are_not_counted_as_prose() {
+        // The tokenizer splits numbers into digits: a markdown table of
+        // scores measured ~1.9 characters per token, and the flat prose rate
+        // let 11% of one vault's chunks past the context.
+        assert_eq!(estimate_tokens("1234567890"), 10);
+        let row = "| plain | 0.96 | 0.52 | 0.91 | 0.73 | 11.4M, 41 |";
+        let chars = row.chars().count();
+        assert!(
+            estimate_tokens(row) * 2 >= chars,
+            "a table row estimates {} tokens for {chars} chars",
+            estimate_tokens(row)
+        );
+    }
+
+    #[test]
+    fn a_case_change_starts_a_new_word() {
+        // camelCase and base64 split where the case flips; one long word
+        // estimate for them undercounts.
+        assert!(estimate_tokens("getElementById") >= 4);
+        assert!(estimate_tokens("aGVsbG8gd29ybGQgYW5kIG1vcmU") >= 10);
+    }
+
+    #[test]
+    fn every_line_break_costs_a_token() {
+        // 600 one-word lines: 600 words and 600 breaks, not 600 tokens.
+        let text = "word\n".repeat(600);
+        let chunks = chunk(&rel("list.txt"), &text);
+        assert!(chunks.len() >= 2, "1,200 tokens in one chunk");
     }
 
     #[test]

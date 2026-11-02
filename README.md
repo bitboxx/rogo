@@ -97,7 +97,8 @@ read files whose size or modification time changed. Regex search needs no
 model and no index.
 
 The first `--index` also writes a `.rogoignore` file with default patterns
-(images, video, archives, databases) when the directory has none. It uses
+(images, video, archives, databases, and dependency directories such as
+`node_modules`, `.venv` and `site-packages`) when the directory has none. It uses
 gitignore syntax, and `.gitignore` and `.ignore` apply too. A leftover `.ck`
 directory from the old ck engine is never read or written; `--clean` removes
 `.rogo` only.
