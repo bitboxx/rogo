@@ -26,20 +26,20 @@ and put the `rogo` binary on your `PATH`:
 
 | Platform | Archive |
 |---|---|
-| Linux x86_64 | `rogo-2.1.0-x86_64-unknown-linux-gnu.tar.gz` |
-| Linux aarch64 | `rogo-2.1.0-aarch64-unknown-linux-gnu.tar.gz` |
-| macOS x86_64 | `rogo-2.1.0-x86_64-apple-darwin.tar.gz` |
-| macOS aarch64 | `rogo-2.1.0-aarch64-apple-darwin.tar.gz` |
-| Windows x86_64 | `rogo-2.1.0-x86_64-pc-windows-msvc.zip` |
+| Linux x86_64 | `rogo-2.2.0-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux aarch64 | `rogo-2.2.0-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS x86_64 | `rogo-2.2.0-x86_64-apple-darwin.tar.gz` |
+| macOS aarch64 | `rogo-2.2.0-aarch64-apple-darwin.tar.gz` |
+| Windows x86_64 | `rogo-2.2.0-x86_64-pc-windows-msvc.zip` |
 
 Check the download against the `.sha256` file beside it (or the combined
 `SHA256SUMS` file):
 
 ```bash
-shasum -a 256 -c rogo-2.1.0-aarch64-apple-darwin.tar.gz.sha256
+shasum -a 256 -c rogo-2.2.0-aarch64-apple-darwin.tar.gz.sha256
 ```
 
-On Windows, `CertUtil -hashfile rogo-2.1.0-x86_64-pc-windows-msvc.zip SHA256`
+On Windows, `CertUtil -hashfile rogo-2.2.0-x86_64-pc-windows-msvc.zip SHA256`
 prints the same hash.
 
 Each archive from 2.1.0 on also carries signed build provenance. With the
@@ -47,7 +47,7 @@ GitHub CLI, this checks that the archive came from the release workflow of
 this repository:
 
 ```bash
-gh attestation verify rogo-2.1.0-aarch64-apple-darwin.tar.gz --repo bitboxx/rogo
+gh attestation verify rogo-2.2.0-aarch64-apple-darwin.tar.gz --repo bitboxx/rogo
 ```
 
 Runtime needs: the Linux and Windows binaries are built with Vulkan and need a
