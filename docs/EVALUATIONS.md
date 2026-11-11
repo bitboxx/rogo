@@ -66,7 +66,7 @@ A third lane at full weight costs one top-3 hit; at 0.5 or 0.25 it changes nothi
 
 The thread's claim that fusing sparse with dense is worse than sparse alone does not apply here: the fused scores sit above every sparse lane alone on top 3 except mSlideOn's 40, and equal to it at the 0.5 weight.
 
-Baseline caveat: this prototype scores today's `--hybrid` at 31 / 43 on the 48, below the 38 / 45 recorded on 17 Oct 2026, because the vault has grown since and the prototype runs rogo's lanes without the earlier per-question tuning. Compare variants with each other and with this run's baseline, not with the October figures.
+Baseline caveat: this prototype scores today's `--hybrid` at 31 / 43 on the 48, below the 38 / 45 recorded on 17 Oct 2026, and the cause of the gap was not isolated (the vault has grown since, and the prototype's scorer differs from `evalh.py`). Compare variants with each other and with this run's baseline, not with the October figures.
 
 ### What would change rogo
 
